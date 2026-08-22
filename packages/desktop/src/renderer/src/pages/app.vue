@@ -34,6 +34,8 @@
       <rename />
       <import-modal />
     </div>
+
+    <right-toc v-if="init && showRightToc" />
   </div>
 </template>
 
@@ -46,6 +48,7 @@ import Recent from '@/components/recent/index.vue'
 import EditorWithTabs from '@/components/editorWithTabs/index.vue'
 import TitleBar from '@/components/titleBar/index.vue'
 import SideBar from '@/components/sideBar/index.vue'
+import RightToc from '@/components/rightToc/index.vue'
 import AboutDialog from '@/components/about/index.vue'
 import CommandPalette from '@/components/commandPalette/index.vue'
 import ExportSettingDialog from '@/components/exportSettings/index.vue'
@@ -61,6 +64,7 @@ import { useCommandCenterStore } from '@/store/commandCenter'
 import { useProjectStore } from '@/store/project'
 import { useAutoUpdatesStore } from '@/store/autoUpdates'
 import { useNotificationStore } from '@/store/notification'
+import { useRightTocStore } from '@/store/rightToc'
 
 const mainStore = useMainStore()
 const editorStore = useEditorStore()
@@ -71,12 +75,14 @@ const listenForMainStore = useListenForMainStore()
 const autoUpdateStore = useAutoUpdatesStore()
 const commandCenterStore = useCommandCenterStore()
 const notificationStore = useNotificationStore()
+const rightTocStore = useRightTocStore()
 
 const timer = ref<ReturnType<typeof setTimeout> | null>(null)
 
 // States from Pinia
 const { windowActive, platform, init } = storeToRefs(mainStore)
 const { showTabBar } = storeToRefs(layoutStore)
+const { showRightToc } = storeToRefs(rightTocStore)
 const { sourceCode, theme, customCss, textDirection, zoom } = storeToRefs(preferencesStore)
 const { projectTree } = storeToRefs(projectStore)
 const { currentFile } = storeToRefs(editorStore)
@@ -240,6 +246,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   flex: 1;
+  min-width: 0;
   min-height: 100vh;
   position: relative;
   & > .editor {

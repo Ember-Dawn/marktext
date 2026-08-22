@@ -80,7 +80,7 @@
       </div>
       <div
         v-if="titleBarStyle === 'custom' && !isFullScreen && !isOsx"
-        class="right-toolbar"
+        class="right-toolbar window-controls"
         :class="[{ 'title-no-drag': titleBarStyle === 'custom' }]"
       >
         <div
@@ -129,6 +129,18 @@
             </svg>
           </div>
         </div>
+        <div
+          class="frameless-titlebar-button frameless-titlebar-right-toc"
+          :class="{ active: showRightToc }"
+          title="Toggle Right TOC"
+          @click.stop="rightTocStore.TOGGLE_RIGHT_TOC()"
+        >
+          <div>
+            <el-icon :size="17">
+              <Memo />
+            </el-icon>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -137,6 +149,7 @@
 <script setup lang="ts">
 import { usePreferencesStore } from '@/store/preferences.js'
 import { useLayoutStore } from '@/store/layout.js'
+import { useRightTocStore } from '@/store/rightToc'
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
 import { minimizePath, restorePath, maximizePath, closePath } from '../../assets/window-controls.js'
@@ -144,7 +157,7 @@ import { PATH_SEPARATOR } from '../../config'
 import { isOsx as isOsxPlatform } from '@/util'
 import { useEditorStore } from '@/store/editor'
 import { useI18n } from 'vue-i18n'
-import { ArrowRight } from '@element-plus/icons-vue'
+import { ArrowRight, Memo } from '@element-plus/icons-vue'
 import type { FileWordCount } from '@shared/types/files'
 
 interface ProjectInfo {
@@ -164,6 +177,7 @@ const props = defineProps<{
 
 const preferencesStore = usePreferencesStore()
 const layoutStore = useLayoutStore()
+const rightTocStore = useRightTocStore()
 const editorStore = useEditorStore()
 const { t } = useI18n()
 
@@ -208,6 +222,7 @@ onMounted(async () => {
 
 const { titleBarStyle } = storeToRefs(preferencesStore)
 const { showTabBar } = storeToRefs(layoutStore)
+const { showRightToc } = storeToRefs(rightTocStore)
 
 const paths = computed(() => {
   if (!props.pathname) return []
@@ -415,6 +430,9 @@ div.title > span {
     margin-right: 10px;
   }
 }
+.right-toolbar.window-controls {
+  width: 184px;
+}
 
 .word-count {
   -webkit-app-region: no-drag;
@@ -460,8 +478,16 @@ div.title > span {
   background-color: rgb(228, 79, 79);
 }
 .frameless-titlebar-minimize:hover,
-.frameless-titlebar-toggle:hover {
+.frameless-titlebar-toggle:hover,
+.frameless-titlebar-right-toc:hover {
   background-color: rgba(0, 0, 0, 0.1);
+}
+.frameless-titlebar-right-toc {
+  color: var(--editorColor50);
+}
+.frameless-titlebar-right-toc.active {
+  color: var(--themeColor);
+  background-color: var(--sideBarItemHoverBgColor);
 }
 .frameless-titlebar-button svg {
   fill: #000000;
