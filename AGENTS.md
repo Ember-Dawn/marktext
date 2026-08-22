@@ -28,6 +28,7 @@
 - 不应为了新增功能大规模重写 upstream 代码
 - 现有左侧 Files / Search / TOC 功能必须保持原样，除非任务明确要求修改
 - 自定义右侧 TOC 已实现，后续修改时必须特别注意标签切换与大文档性能
+- Windows 安装包已定制 Markdown 文件与文件夹本身的 `Open with MarkText` 右键菜单；不要误删对应 NSIS 注册/卸载逻辑
 
 ## 当前主要自定义功能
 
@@ -46,6 +47,20 @@
 详细设计见：
 
 `docs/custom/右侧TOC实现记录.md`
+
+### Windows 右键菜单
+
+Windows NSIS 安装包已新增：
+
+- Markdown 文件右键 `Open with MarkText`
+- 文件夹本身右键 `Open with MarkText`
+- 不注册文件夹空白处菜单
+- 与“是否将 Markdown 默认关联到 MarkText”的安装选项相互独立
+- 卸载时自动清理本功能创建的注册表项
+
+详细设计见：
+
+`docs/custom/Windows右键菜单实现记录.md`
 
 ## 构建约定
 

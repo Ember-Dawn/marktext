@@ -88,6 +88,16 @@ electron-builder 26.0.3
 
 因此目标是 Windows x64 安装 EXE，不额外生成 ARM64、macOS、Linux，也不主动生成 ZIP target。
 
+第二阶段会读取：
+
+```text
+packages/desktop/build/windows/installer.nsh
+```
+
+因此当前定制的 Markdown 文件/文件夹 `Open with MarkText` 右键菜单会被编入 setup EXE。
+
+注意：`pnpm run dev` 或仅执行第一阶段都不会向 Windows 注册右键菜单；必须运行第二阶段、生成 NSIS setup，并实际安装该 setup 后才会注册。
+
 ## 4. 推荐的一整套日常命令
 
 代码修改完成并通过 `pnpm run dev` 测试后：
@@ -119,6 +129,19 @@ marktext-win-x64-0.19.1-setup.exe
 ```
 
 实际文件名应以 `dist` 中生成结果为准。
+
+安装该 setup 后，Windows 经典右键菜单（Windows 11 中通常位于“显示更多选项”）应包含：
+
+```text
+Open with MarkText
+```
+
+适用于：
+
+- 支持的 Markdown 文件
+- 文件夹本身
+
+不会注册文件夹空白处菜单。
 
 ## 6. 为什么不优先使用 `pnpm run build:win:x64`
 
@@ -217,7 +240,23 @@ pnpm run typecheck
 
 然后再打包。
 
-## 10. 构建流程简表
+## 10. Windows 右键菜单测试
+
+右键菜单属于安装器行为，不需要通过 `pnpm run dev` 验证。
+
+建议：
+
+1. 完成两阶段构建；
+2. 安装新生成的 `marktext-win-x64-0.19.1-setup.exe`；
+3. 对 `.md` 等支持的 Markdown 文件右键；
+4. 对文件夹本身右键；
+5. Windows 11 如未在一级菜单显示，进入“显示更多选项”查看经典菜单；
+6. 确认不存在文件夹空白处的 MarkText 菜单；
+7. 卸载 MarkText 后确认上述 MarkText 右键项被清理。
+
+文件关联询问与该右键菜单是两个独立功能：即使安装时不选择把 Markdown 默认关联到 MarkText，`Open with MarkText` 仍应注册。
+
+## 11. 构建流程简表
 
 ```text
 clone / 修改源码
@@ -235,9 +274,13 @@ cd packages/desktop
 npx --yes electron-builder@26.0.3 --win nsis --x64 --publish never
       ↓
 dist/marktext-win-x64-0.19.1-setup.exe
+      ↓
+安装 setup
+      ↓
+注册 Open with MarkText 右键菜单
 ```
 
-## 11. 性能相关提醒
+## 12. 性能相关提醒
 
 打包工具版本本身不应被默认认定为编辑器运行性能差异的原因。
 
