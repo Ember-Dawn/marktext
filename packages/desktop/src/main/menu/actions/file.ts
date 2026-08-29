@@ -11,7 +11,7 @@ import {
 } from 'electron'
 import log from 'electron-log'
 import { isDirectory, isFile, exists } from 'common/filesystem'
-import { MARKDOWN_EXTENSIONS, isMarkdownFile } from 'common/filesystem/paths'
+import { MARKDOWN_EXTENSIONS, isMarkdownFile, isSamePathSync } from 'common/filesystem/paths'
 import { checkUpdates, userSetting } from './marktext'
 import { showTabBar } from './view'
 import { COMMANDS } from '../../commands'
@@ -195,6 +195,10 @@ const handleResponseForSave = async(
   // requires the strict `MarkdownDocumentOptions` shape — the renderer always
   // populates every field for the unsaved-file dialog payload, so the cast
   // is safe at this seam.
+  if (alreadyExistOnDisk) {
+    ipcMain.emit('window-file-saving', win.id, filePath)
+  }
+
   return writeMarkdownFile(filePath, markdown, options as Parameters<typeof writeMarkdownFile>[2])
     .then(() => {
       if (!alreadyExistOnDisk) {
@@ -204,12 +208,14 @@ const handleResponseForSave = async(
         const newFilename = path.basename(filePath!)
         win.webContents.send('mt::set-pathname', { id, pathname: filePath, filename: newFilename })
       } else {
-        ipcMain.emit('window-file-saved', win.id, filePath)
         win.webContents.send('mt::tab-saved', id)
       }
       return id
     })
     .catch((err: unknown) => {
+      if (alreadyExistOnDisk) {
+        ipcMain.emit('window-file-save-failed', win.id, filePath)
+      }
       log.error('Error while saving:', err)
       const msg = err instanceof Error ? err.message : String(err)
       win.webContents.send('mt::tab-save-failure', id, msg)
@@ -360,6 +366,11 @@ ipcMain.on(
 
     if (filePath && !canceled) {
       filePath = path.resolve(filePath)
+      const savingExistingPath = !!pathname && isSamePathSync(pathname, filePath)
+      if (savingExistingPath) {
+        ipcMain.emit('window-file-saving', win.id, filePath)
+      }
+
       writeMarkdownFile(filePath, markdown, options as Parameters<typeof writeMarkdownFile>[2])
         .then(() => {
           if (!alreadyExistOnDisk) {
@@ -372,7 +383,7 @@ ipcMain.on(
               pathname: filePath,
               filename: newFilename
             })
-          } else if (pathname !== filePath) {
+          } else if (!savingExistingPath) {
             // Update window file list and watcher.
             ipcMain.emit('window-change-file-path', win.id, filePath, pathname)
 
@@ -383,11 +394,13 @@ ipcMain.on(
               filename: newFilename
             })
           } else {
-            ipcMain.emit('window-file-saved', win.id, filePath)
             win.webContents.send('mt::tab-saved', id)
           }
         })
         .catch((err: unknown) => {
+          if (savingExistingPath) {
+            ipcMain.emit('window-file-save-failed', win.id, filePath)
+          }
           log.error('Error while save as:', err)
           const msg = err instanceof Error ? err.message : String(err)
           win.webContents.send('mt::tab-save-failure', id, msg)
@@ -517,7 +530,6 @@ ipcMain.on('mt::rename', async(e, { id, pathname, newPathname }: RenamePayload) 
       cancelId: 1,
       noLink: true
     })
-
     if (response === 0) {
       doRename()
     }

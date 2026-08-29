@@ -6,7 +6,7 @@ import { exists } from 'common/filesystem'
 import { hasMarkdownExtension, checkPathExcludePattern } from 'common/filesystem/paths'
 import { getUniqueId } from '../utils'
 import { loadMarkdownFile } from '../filesystem/markdown'
-import { isLinux, isOsx } from '../config'
+import { isLinux, isOsx, isWindows } from '../config'
 import type { BrowserWindow } from 'electron'
 import type { LineEnding } from '@shared/types/files'
 
@@ -38,6 +38,11 @@ interface WatcherEntry {
   pathname: string
   type: WatchType
   close: () => void
+}
+
+const normalizeWatchPath = (pathname: string): string => {
+  const resolvedPath = path.resolve(pathname)
+  return isWindows ? resolvedPath.toLowerCase() : resolvedPath
 }
 
 const add = async(
@@ -380,7 +385,23 @@ class Watcher {
     pathname: string,
     duration: number = WATCHER_STABILITY_THRESHOLD + WATCHER_STABILITY_POLL_INTERVAL * 2
   ): void {
-    this._ignoreChangeEvents.push({ windowId, pathname, duration, start: new Date() })
+    this._ignoreChangeEvents.push({
+      windowId,
+      pathname: normalizeWatchPath(pathname),
+      duration,
+      start: new Date()
+    })
+  }
+
+  cancelIgnoredChangeEvent(windowId: number, pathname: string): void {
+    const normalizedPathname = normalizeWatchPath(pathname)
+    for (let i = this._ignoreChangeEvents.length - 1; i >= 0; --i) {
+      const entry = this._ignoreChangeEvents[i]
+      if (entry.windowId === windowId && entry.pathname === normalizedPathname) {
+        this._ignoreChangeEvents.splice(i, 1)
+        return
+      }
+    }
   }
 
   /**
@@ -396,9 +417,10 @@ class Watcher {
     if (type === 'file') {
       const { _ignoreChangeEvents } = this
       const currentTime = new Date()
+      const normalizedPathname = normalizeWatchPath(pathname)
       for (let i = 0; i < _ignoreChangeEvents.length; ++i) {
         const { windowId, pathname: pathToIgnore, start, duration } = _ignoreChangeEvents[i]
-        if (windowId === winId && pathToIgnore === pathname) {
+        if (windowId === winId && pathToIgnore === normalizedPathname) {
           _ignoreChangeEvents.splice(i, 1)
           --i
 

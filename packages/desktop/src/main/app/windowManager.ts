@@ -468,10 +468,15 @@ class WindowManager extends TypedEmitter<WindowManagerEvents> {
     )
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ipcMain.on('window-file-saved', (windowId: any, pathname: any) => {
-      // A changed event is emitted earliest after the stability threshold.
+    ipcMain.on('window-file-saving', (windowId: any, pathname: any) => {
+      // Register before writing so the editor's own save cannot race the watcher.
       const duration = WATCHER_STABILITY_THRESHOLD + WATCHER_STABILITY_POLL_INTERVAL * 2
       this._watcher.ignoreChangedEvent(windowId as number, pathname as string, duration)
+    })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ipcMain.on('window-file-save-failed', (windowId: any, pathname: any) => {
+      this._watcher.cancelIgnoredChangeEvent(windowId as number, pathname as string)
     })
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
