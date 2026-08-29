@@ -12,7 +12,8 @@
 
 1. `docs/custom/项目自定义修改总览.md`
 2. 与当前任务直接相关的 `docs/custom/*实现记录.md`
-3. 涉及 Windows 本地构建、打包或安装包时，再阅读 `docs/custom/Windows_x64本地编译指南.md`
+3. 涉及文件保存、外部文件变更或 watcher 时，阅读 `docs/custom/文件保存与Watcher自触发问题说明.md`
+4. 涉及 Windows 本地构建、打包或安装包时，再阅读 `docs/custom/Windows_x64本地编译指南.md`
 
 不要仅根据 upstream 最新分支推测本仓库结构；应以当前 `main` 的实际代码为准。
 
@@ -29,6 +30,11 @@
 - 现有左侧 Files / Search / TOC 功能必须保持原样，除非任务明确要求修改
 - 自定义右侧 TOC 已实现，后续修改时必须特别注意标签切换与大文档性能
 - Windows 安装包已定制 Markdown 文件与文件夹本身的 `Open with MarkText` 右键菜单；不要误删对应 NSIS 注册/卸载逻辑
+- 修改文件保存 / watcher 逻辑时，必须明确区分 MarkText 自身保存与真实外部修改；不能通过“保存后若干秒内无条件忽略文件变化”来规避提示
+- Windows 文件路径比较不要依赖原始字符串 `===`；应使用项目已有的路径等价判断，或先进行一致的路径规范化
+- 不要假设“一次保存只产生一个 filesystem change”；Windows、OneDrive 等环境可能对同一次物理保存产生多个 watcher 事件
+- 当前 self-save 抑制以“短时有效的保存内容 fingerprint”为依据；只有磁盘内容仍与 MarkText 刚保存的内容一致时才忽略，内容不同必须继续作为真实外部修改处理
+- 修改 watcher 后至少回归测试：普通 Ctrl+S、OneDrive/云盘文件、Save As 同一路径、保存失败，以及 VS Code / Notepad 等外部编辑器修改
 
 ## 当前主要自定义功能
 
@@ -61,6 +67,19 @@ Windows NSIS 安装包已新增：
 详细设计见：
 
 `docs/custom/Windows右键菜单实现记录.md`
+
+### 文件保存与 Watcher 自触发修复
+
+已针对 Windows / OneDrive 场景修复 MarkText 自己保存文件后又被 watcher 误判为“外部修改”的问题。
+
+后续维护时应保留两个目标：
+
+- MarkText 自身 Ctrl+S / Save As 引发的重复 watcher 事件不应弹出 Reload 提示；
+- VS Code、Notepad、云端同步冲突等导致磁盘内容真正变化时，仍必须保留外部修改检测与 Reload 提示。
+
+详细排查、诊断证据、最终方案和回归测试见：
+
+`docs/custom/文件保存与Watcher自触发问题说明.md`
 
 ## 构建约定
 
