@@ -196,6 +196,13 @@ const handleResponseForSave = async(
   // populates every field for the unsaved-file dialog payload, so the cast
   // is safe at this seam.
   if (alreadyExistOnDisk) {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[MT-WATCH-DIAG]', 'SAVE_BEGIN', {
+        windowId: win.id,
+        pathname: filePath,
+        id
+      })
+    }
     ipcMain.emit('window-file-saving', win.id, filePath)
   }
 
@@ -208,12 +215,26 @@ const handleResponseForSave = async(
         const newFilename = path.basename(filePath!)
         win.webContents.send('mt::set-pathname', { id, pathname: filePath, filename: newFilename })
       } else {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[MT-WATCH-DIAG]', 'SAVE_SUCCESS', {
+            windowId: win.id,
+            pathname: filePath,
+            id
+          })
+        }
         win.webContents.send('mt::tab-saved', id)
       }
       return id
     })
     .catch((err: unknown) => {
       if (alreadyExistOnDisk) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[MT-WATCH-DIAG]', 'SAVE_FAILED', {
+            windowId: win.id,
+            pathname: filePath,
+            id
+          })
+        }
         ipcMain.emit('window-file-save-failed', win.id, filePath)
       }
       log.error('Error while saving:', err)

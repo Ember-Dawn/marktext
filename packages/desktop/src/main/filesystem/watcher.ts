@@ -15,6 +15,14 @@ import type { LineEnding } from '@shared/types/files'
 export const WATCHER_STABILITY_THRESHOLD = 1000
 export const WATCHER_STABILITY_POLL_INTERVAL = 150
 
+const WATCHER_DIAGNOSTICS = process.env.NODE_ENV === 'development'
+
+const watcherDiag = (event: string, details: Record<string, unknown>): void => {
+  if (WATCHER_DIAGNOSTICS) {
+    console.log('[MT-WATCH-DIAG]', event, details)
+  }
+}
+
 const EVENT_NAME = {
   dir: 'mt::update-object-tree' as const,
   file: 'mt::update-file' as const
@@ -197,6 +205,25 @@ class Watcher {
     const usePolling = isOsx ? true : this._preferences.getItem('watcherUsePolling')
 
     const id = getUniqueId()
+    if (type === 'file') {
+      const normalizedWatchPath = normalizeWatchPath(watchPath)
+      const duplicateWatcherIds = Object.entries(this.watchers)
+        .filter(
+          ([, entry]) =>
+            entry.win.id === win.id &&
+            entry.type === 'file' &&
+            normalizeWatchPath(entry.pathname) === normalizedWatchPath
+        )
+        .map(([watcherId]) => watcherId)
+
+      watcherDiag('WATCH_CREATED', {
+        watcherId: id,
+        windowId: win.id,
+        pathname: watchPath,
+        normalizedPathname: normalizedWatchPath,
+        duplicateWatcherIds
+      })
+    }
 
     const watcher = chokidar.watch(watchPath, {
       ignored: (pathname: string, fileInfo?: { isDirectory: () => boolean }) => {
@@ -240,7 +267,7 @@ class Watcher {
 
     watcher
       .on('add', async(pathname: string) => {
-        if (!(await this._shouldIgnoreEvent(win.id, pathname, type, usePolling))) {
+        if (!(await this._shouldIgnoreEvent(win.id, pathname, type, usePolling, id))) {
           const { _preferences } = this
           const eol = _preferences.getPreferredEol() as LineEnding
           const { autoGuessEncoding, trimTrailingNewline, autoNormalizeLineEndings } =
@@ -257,7 +284,7 @@ class Watcher {
         }
       })
       .on('change', async(pathname: string) => {
-        if (!(await this._shouldIgnoreEvent(win.id, pathname, type, usePolling))) {
+        if (!(await this._shouldIgnoreEvent(win.id, pathname, type, usePolling, id))) {
           const { _preferences } = this
           const eol = _preferences.getPreferredEol() as LineEnding
           const { autoGuessEncoding, trimTrailingNewline, autoNormalizeLineEndings } =
@@ -385,11 +412,19 @@ class Watcher {
     pathname: string,
     duration: number = WATCHER_STABILITY_THRESHOLD + WATCHER_STABILITY_POLL_INTERVAL * 2
   ): void {
+    const normalizedPathname = normalizeWatchPath(pathname)
     this._ignoreChangeEvents.push({
       windowId,
-      pathname: normalizeWatchPath(pathname),
+      pathname: normalizedPathname,
       duration,
       start: new Date()
+    })
+    watcherDiag('IGNORE_REGISTERED', {
+      windowId,
+      pathname,
+      normalizedPathname,
+      duration,
+      pendingIgnoreCount: this._ignoreChangeEvents.length
     })
   }
 
@@ -399,6 +434,12 @@ class Watcher {
       const entry = this._ignoreChangeEvents[i]
       if (entry.windowId === windowId && entry.pathname === normalizedPathname) {
         this._ignoreChangeEvents.splice(i, 1)
+        watcherDiag('IGNORE_CANCELLED', {
+          windowId,
+          pathname,
+          normalizedPathname,
+          pendingIgnoreCount: this._ignoreChangeEvents.length
+        })
         return
       }
     }
@@ -412,17 +453,33 @@ class Watcher {
     winId: number,
     pathname: string,
     type: WatchType,
-    usePolling: boolean
+    usePolling: boolean,
+    watcherId?: string
   ): Promise<boolean> {
     if (type === 'file') {
       const { _ignoreChangeEvents } = this
       const currentTime = new Date()
       const normalizedPathname = normalizeWatchPath(pathname)
+      watcherDiag('FILE_EVENT', {
+        watcherId,
+        windowId: winId,
+        pathname,
+        normalizedPathname,
+        pendingIgnoreCount: _ignoreChangeEvents.length
+      })
       for (let i = 0; i < _ignoreChangeEvents.length; ++i) {
         const { windowId, pathname: pathToIgnore, start, duration } = _ignoreChangeEvents[i]
         if (windowId === winId && pathToIgnore === normalizedPathname) {
           _ignoreChangeEvents.splice(i, 1)
           --i
+          watcherDiag('IGNORE_MATCH', {
+            watcherId,
+            windowId: winId,
+            pathname,
+            normalizedPathname,
+            ageMs: currentTime.getTime() - start.getTime(),
+            duration
+          })
 
           // Modification origin is the editor and we should ignore the event.
           if (currentTime.getTime() - start.getTime() < duration) {
@@ -449,6 +506,13 @@ class Watcher {
           }
         }
       }
+      watcherDiag('IGNORE_MISS', {
+        watcherId,
+        windowId: winId,
+        pathname,
+        normalizedPathname,
+        pendingIgnoreCount: _ignoreChangeEvents.length
+      })
     }
     return false
   }
