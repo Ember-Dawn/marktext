@@ -1,5 +1,6 @@
 import path from 'path'
 import fsPromises from 'fs/promises'
+import { createHash } from 'crypto'
 import log from 'electron-log'
 import chokidar, { type FSWatcher } from 'chokidar'
 import { exists } from 'common/filesystem'
@@ -14,14 +15,7 @@ import type { LineEnding } from '@shared/types/files'
 
 export const WATCHER_STABILITY_THRESHOLD = 1000
 export const WATCHER_STABILITY_POLL_INTERVAL = 150
-
-const WATCHER_DIAGNOSTICS = process.env.NODE_ENV === 'development'
-
-const watcherDiag = (event: string, details: Record<string, unknown>): void => {
-  if (WATCHER_DIAGNOSTICS) {
-    console.log('[MT-WATCH-DIAG]', event, details)
-  }
-}
+const SELF_SAVE_VALIDITY_MS = 10000
 
 const EVENT_NAME = {
   dir: 'mt::update-object-tree' as const,
@@ -33,11 +27,11 @@ type WatchType = 'dir' | 'file'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Preferences = any
 
-interface IgnoreEntry {
+interface SelfSaveEntry {
   windowId: number
   pathname: string
-  duration: number
-  start: Date
+  fingerprint: string
+  expiresAt: number
 }
 
 interface WatcherEntry {
@@ -52,6 +46,9 @@ const normalizeWatchPath = (pathname: string): string => {
   const resolvedPath = path.resolve(pathname)
   return isWindows ? resolvedPath.toLowerCase() : resolvedPath
 }
+
+const fingerprintMarkdown = (markdown: string): string =>
+  createHash('sha256').update(markdown, 'utf8').digest('hex')
 
 const add = async(
   win: BrowserWindow,
@@ -120,7 +117,8 @@ const change = async(
   endOfLine: LineEnding,
   autoGuessEncoding: boolean,
   trimTrailingNewline: number,
-  autoNormalizeLineEndings: boolean
+  autoNormalizeLineEndings: boolean,
+  shouldIgnoreMarkdown?: (markdown: string) => boolean
 ): Promise<void> => {
   if (type === 'dir') {
     // Only send mtimeMs so the sidebar can re-sort; skip loading file content.
@@ -143,6 +141,9 @@ const change = async(
         loadMarkdownFile(pathname, endOfLine, autoGuessEncoding, trimTrailingNewline, autoNormalizeLineEndings),
         fsPromises.stat(pathname)
       ])
+      if (shouldIgnoreMarkdown?.(data.markdown)) {
+        return
+      }
       const file = { pathname, data, mtimeMs: stats.mtimeMs }
       win.webContents.send('mt::update-file', {
         type: 'change',
@@ -192,12 +193,12 @@ const unlinkDir = (win: BrowserWindow, pathname: string, type: WatchType): void 
 
 class Watcher {
   private _preferences: Preferences
-  private _ignoreChangeEvents: IgnoreEntry[]
+  private _selfSaveEntries: SelfSaveEntry[]
   watchers: Record<string, WatcherEntry>
 
   constructor(preferences: Preferences) {
     this._preferences = preferences
-    this._ignoreChangeEvents = []
+    this._selfSaveEntries = []
     this.watchers = {}
   }
 
@@ -205,25 +206,6 @@ class Watcher {
     const usePolling = isOsx ? true : this._preferences.getItem('watcherUsePolling')
 
     const id = getUniqueId()
-    if (type === 'file') {
-      const normalizedWatchPath = normalizeWatchPath(watchPath)
-      const duplicateWatcherIds = Object.entries(this.watchers)
-        .filter(
-          ([, entry]) =>
-            entry.win.id === win.id &&
-            entry.type === 'file' &&
-            normalizeWatchPath(entry.pathname) === normalizedWatchPath
-        )
-        .map(([watcherId]) => watcherId)
-
-      watcherDiag('WATCH_CREATED', {
-        watcherId: id,
-        windowId: win.id,
-        pathname: watchPath,
-        normalizedPathname: normalizedWatchPath,
-        duplicateWatcherIds
-      })
-    }
 
     const watcher = chokidar.watch(watchPath, {
       ignored: (pathname: string, fileInfo?: { isDirectory: () => boolean }) => {
@@ -267,38 +249,37 @@ class Watcher {
 
     watcher
       .on('add', async(pathname: string) => {
-        if (!(await this._shouldIgnoreEvent(win.id, pathname, type, usePolling, id))) {
-          const { _preferences } = this
-          const eol = _preferences.getPreferredEol() as LineEnding
-          const { autoGuessEncoding, trimTrailingNewline, autoNormalizeLineEndings } =
-            _preferences.getAll()
-          add(
-            win,
-            pathname,
-            type,
-            eol,
-            autoGuessEncoding,
-            trimTrailingNewline,
-            autoNormalizeLineEndings
-          )
-        }
+        const { _preferences } = this
+        const eol = _preferences.getPreferredEol() as LineEnding
+        const { autoGuessEncoding, trimTrailingNewline, autoNormalizeLineEndings } =
+          _preferences.getAll()
+        add(
+          win,
+          pathname,
+          type,
+          eol,
+          autoGuessEncoding,
+          trimTrailingNewline,
+          autoNormalizeLineEndings
+        )
       })
       .on('change', async(pathname: string) => {
-        if (!(await this._shouldIgnoreEvent(win.id, pathname, type, usePolling, id))) {
-          const { _preferences } = this
-          const eol = _preferences.getPreferredEol() as LineEnding
-          const { autoGuessEncoding, trimTrailingNewline, autoNormalizeLineEndings } =
-            _preferences.getAll()
-          change(
-            win,
-            pathname,
-            type,
-            eol,
-            autoGuessEncoding,
-            trimTrailingNewline,
-            autoNormalizeLineEndings
-          )
-        }
+        const { _preferences } = this
+        const eol = _preferences.getPreferredEol() as LineEnding
+        const { autoGuessEncoding, trimTrailingNewline, autoNormalizeLineEndings } =
+          _preferences.getAll()
+        change(
+          win,
+          pathname,
+          type,
+          eol,
+          autoGuessEncoding,
+          trimTrailingNewline,
+          autoNormalizeLineEndings,
+          type === 'file'
+            ? (markdown) => this._shouldIgnoreSavedContent(win.id, pathname, markdown)
+            : undefined
+        )
       })
       .on('unlink', (pathname: string) => unlink(win, pathname, type))
       .on('addDir', (pathname: string) => addDir(win, pathname, type))
@@ -395,125 +376,73 @@ class Watcher {
       watchIds.forEach((id) => delete this.watchers[id])
       watchers.forEach((watcher) => watcher.close())
     }
+    this._selfSaveEntries = this._selfSaveEntries.filter((entry) => entry.windowId !== windowId)
   }
 
   close(): void {
     Object.keys(this.watchers).forEach((id) => this.watchers[id].close())
     this.watchers = {}
-    this._ignoreChangeEvents = []
+    this._selfSaveEntries = []
   }
 
-  /**
-   * Ignore the next changed event within a certain time for the current file
-   * and window. Only valid for files and "add"/"change" events.
-   */
-  ignoreChangedEvent(
+  rememberSelfSave(
     windowId: number,
     pathname: string,
-    duration: number = WATCHER_STABILITY_THRESHOLD + WATCHER_STABILITY_POLL_INTERVAL * 2
+    markdown: string,
+    duration: number = SELF_SAVE_VALIDITY_MS
   ): void {
     const normalizedPathname = normalizeWatchPath(pathname)
-    this._ignoreChangeEvents.push({
+    const fingerprint = fingerprintMarkdown(markdown)
+    const now = Date.now()
+    this._selfSaveEntries = this._selfSaveEntries.filter(
+      (entry) =>
+        entry.expiresAt > now &&
+        !(entry.windowId === windowId && entry.pathname === normalizedPathname)
+    )
+    this._selfSaveEntries.push({
       windowId,
       pathname: normalizedPathname,
-      duration,
-      start: new Date()
-    })
-    watcherDiag('IGNORE_REGISTERED', {
-      windowId,
-      pathname,
-      normalizedPathname,
-      duration,
-      pendingIgnoreCount: this._ignoreChangeEvents.length
+      fingerprint,
+      expiresAt: now + duration
     })
   }
 
-  cancelIgnoredChangeEvent(windowId: number, pathname: string): void {
+  cancelSelfSave(windowId: number, pathname: string, markdown: string): void {
     const normalizedPathname = normalizeWatchPath(pathname)
-    for (let i = this._ignoreChangeEvents.length - 1; i >= 0; --i) {
-      const entry = this._ignoreChangeEvents[i]
-      if (entry.windowId === windowId && entry.pathname === normalizedPathname) {
-        this._ignoreChangeEvents.splice(i, 1)
-        watcherDiag('IGNORE_CANCELLED', {
-          windowId,
-          pathname,
-          normalizedPathname,
-          pendingIgnoreCount: this._ignoreChangeEvents.length
-        })
-        return
-      }
-    }
+    const fingerprint = fingerprintMarkdown(markdown)
+    this._selfSaveEntries = this._selfSaveEntries.filter(
+      (entry) =>
+        !(
+          entry.windowId === windowId &&
+          entry.pathname === normalizedPathname &&
+          entry.fingerprint === fingerprint
+        )
+    )
   }
 
-  /**
-   * Check whether we should ignore the current event because the file may be
-   * changed from MarkText itself.
-   */
-  async _shouldIgnoreEvent(
-    winId: number,
-    pathname: string,
-    type: WatchType,
-    usePolling: boolean,
-    watcherId?: string
-  ): Promise<boolean> {
-    if (type === 'file') {
-      const { _ignoreChangeEvents } = this
-      const currentTime = new Date()
-      const normalizedPathname = normalizeWatchPath(pathname)
-      watcherDiag('FILE_EVENT', {
-        watcherId,
-        windowId: winId,
-        pathname,
-        normalizedPathname,
-        pendingIgnoreCount: _ignoreChangeEvents.length
-      })
-      for (let i = 0; i < _ignoreChangeEvents.length; ++i) {
-        const { windowId, pathname: pathToIgnore, start, duration } = _ignoreChangeEvents[i]
-        if (windowId === winId && pathToIgnore === normalizedPathname) {
-          _ignoreChangeEvents.splice(i, 1)
-          --i
-          watcherDiag('IGNORE_MATCH', {
-            watcherId,
-            windowId: winId,
-            pathname,
-            normalizedPathname,
-            ageMs: currentTime.getTime() - start.getTime(),
-            duration
-          })
+  private _shouldIgnoreSavedContent(winId: number, pathname: string, markdown: string): boolean {
+    const normalizedPathname = normalizeWatchPath(pathname)
+    const now = Date.now()
+    this._selfSaveEntries = this._selfSaveEntries.filter((entry) => entry.expiresAt > now)
 
-          // Modification origin is the editor and we should ignore the event.
-          if (currentTime.getTime() - start.getTime() < duration) {
-            return true
-          }
-
-          // Try to catch cloud drives that emit the change event not
-          // immediately or re-sync the change (GH#3044).
-          if (!usePolling) {
-            try {
-              const fileInfo = await fsPromises.stat(pathname)
-              if (fileInfo.mtime.getTime() - start.getTime() < duration) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                if ((globalThis as any).MARKTEXT_DEBUG_VERBOSE >= 3) {
-                  console.log(
-                    `Ignoring file event after "stat": current="${currentTime.toISOString()}", start="${start.toISOString()}", file="${fileInfo.mtime.toISOString()}".`
-                  )
-                }
-                return true
-              }
-            } catch (error) {
-              console.error('Failed to "stat" file to determine modification time:', error)
-            }
-          }
-        }
-      }
-      watcherDiag('IGNORE_MISS', {
-        watcherId,
-        windowId: winId,
-        pathname,
-        normalizedPathname,
-        pendingIgnoreCount: _ignoreChangeEvents.length
-      })
+    const index = this._selfSaveEntries.findIndex(
+      (entry) => entry.windowId === winId && entry.pathname === normalizedPathname
+    )
+    if (index === -1) {
+      return false
     }
+
+    const entry = this._selfSaveEntries[index]
+    if (entry.fingerprint === fingerprintMarkdown(markdown)) {
+      // Cloud drives can emit multiple events for the same physical save. Keep
+      // the entry until it expires so all events that still represent exactly
+      // what MarkText wrote are ignored.
+      return true
+    }
+
+    // The file now contains different content, so this is a genuine external
+    // modification and the self-save marker must no longer suppress events.
+    this._selfSaveEntries.splice(index, 1)
     return false
   }
 }

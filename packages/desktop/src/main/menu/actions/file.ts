@@ -196,14 +196,7 @@ const handleResponseForSave = async(
   // populates every field for the unsaved-file dialog payload, so the cast
   // is safe at this seam.
   if (alreadyExistOnDisk) {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[MT-WATCH-DIAG]', 'SAVE_BEGIN', {
-        windowId: win.id,
-        pathname: filePath,
-        id
-      })
-    }
-    ipcMain.emit('window-file-saving', win.id, filePath)
+    ipcMain.emit('window-file-saving', win.id, filePath, markdown)
   }
 
   return writeMarkdownFile(filePath, markdown, options as Parameters<typeof writeMarkdownFile>[2])
@@ -215,27 +208,13 @@ const handleResponseForSave = async(
         const newFilename = path.basename(filePath!)
         win.webContents.send('mt::set-pathname', { id, pathname: filePath, filename: newFilename })
       } else {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[MT-WATCH-DIAG]', 'SAVE_SUCCESS', {
-            windowId: win.id,
-            pathname: filePath,
-            id
-          })
-        }
         win.webContents.send('mt::tab-saved', id)
       }
       return id
     })
     .catch((err: unknown) => {
       if (alreadyExistOnDisk) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[MT-WATCH-DIAG]', 'SAVE_FAILED', {
-            windowId: win.id,
-            pathname: filePath,
-            id
-          })
-        }
-        ipcMain.emit('window-file-save-failed', win.id, filePath)
+        ipcMain.emit('window-file-save-failed', win.id, filePath, markdown)
       }
       log.error('Error while saving:', err)
       const msg = err instanceof Error ? err.message : String(err)
@@ -389,7 +368,7 @@ ipcMain.on(
       filePath = path.resolve(filePath)
       const savingExistingPath = !!pathname && isSamePathSync(pathname, filePath)
       if (savingExistingPath) {
-        ipcMain.emit('window-file-saving', win.id, filePath)
+        ipcMain.emit('window-file-saving', win.id, filePath, markdown)
       }
 
       writeMarkdownFile(filePath, markdown, options as Parameters<typeof writeMarkdownFile>[2])
@@ -420,7 +399,7 @@ ipcMain.on(
         })
         .catch((err: unknown) => {
           if (savingExistingPath) {
-            ipcMain.emit('window-file-save-failed', win.id, filePath)
+            ipcMain.emit('window-file-save-failed', win.id, filePath, markdown)
           }
           log.error('Error while save as:', err)
           const msg = err instanceof Error ? err.message : String(err)

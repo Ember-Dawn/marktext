@@ -2,10 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import type { BrowserWindow as IBrowserWindow } from 'electron'
 import log from 'electron-log'
 import { TypedEmitter } from '@shared/types/typedEmitter'
-import Watcher, {
-  WATCHER_STABILITY_THRESHOLD,
-  WATCHER_STABILITY_POLL_INTERVAL
-} from '../filesystem/watcher'
+import Watcher from '../filesystem/watcher'
 import type BaseWindow from '../windows/base'
 import { WindowType } from '../windows/base'
 import type { WindowTypeValue } from '../windows/base'
@@ -468,15 +465,13 @@ class WindowManager extends TypedEmitter<WindowManagerEvents> {
     )
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ipcMain.on('window-file-saving', (windowId: any, pathname: any) => {
-      // Register before writing so the editor's own save cannot race the watcher.
-      const duration = WATCHER_STABILITY_THRESHOLD + WATCHER_STABILITY_POLL_INTERVAL * 2
-      this._watcher.ignoreChangedEvent(windowId as number, pathname as string, duration)
+    ipcMain.on('window-file-saving', (windowId: any, pathname: any, markdown: any) => {
+      this._watcher.rememberSelfSave(windowId as number, pathname as string, markdown as string)
     })
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ipcMain.on('window-file-save-failed', (windowId: any, pathname: any) => {
-      this._watcher.cancelIgnoredChangeEvent(windowId as number, pathname as string)
+    ipcMain.on('window-file-save-failed', (windowId: any, pathname: any, markdown: any) => {
+      this._watcher.cancelSelfSave(windowId as number, pathname as string, markdown as string)
     })
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
