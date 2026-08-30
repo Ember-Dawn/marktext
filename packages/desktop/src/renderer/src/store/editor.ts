@@ -1349,6 +1349,8 @@ export const useEditorStore = defineStore('editor', {
       if (!tab) return
 
       const { filename, pathname, markdown: oldMarkdown, trimTrailingNewline } = tab
+      const wasSaved = tab.isSaved
+      const rawMarkdown = markdown
 
       markdown = adjustTrailingNewlines(markdown, trimTrailingNewline)
       tab.markdown = markdown
@@ -1375,6 +1377,30 @@ export const useEditorStore = defineStore('editor', {
         typeof lastEditIndex === 'number' && lastEditIndex >= 0
           ? tab.history.stack[lastEditIndex]
           : undefined
+
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[MT-CONTENT-DIAG]', 'CONTENT_CHANGE', {
+          id,
+          pathname,
+          wasSaved,
+          trimTrailingNewline,
+          oldMarkdownLength: oldMarkdown.length,
+          rawMarkdownLength: rawMarkdown.length,
+          adjustedMarkdownLength: markdown.length,
+          sameAfterAdjust: oldMarkdown === markdown,
+          oldTail: JSON.stringify(oldMarkdown.slice(-40)),
+          rawTail: JSON.stringify(rawMarkdown.slice(-40)),
+          adjustedTail: JSON.stringify(markdown.slice(-40)),
+          historyPayloadPresent: !!history,
+          historyIndex: tab.history.index,
+          historyStackLength: tab.history.stack.length,
+          lastEditIndex,
+          lastSavedHistoryId: tab.lastSavedHistoryId,
+          lastInitIndex: tab.history.lastInitIndex,
+          editEntryId: editEntry?.id
+        })
+      }
+
       if (
         (typeof lastEditIndex === 'number' &&
           lastEditIndex >= 0 &&
