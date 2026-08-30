@@ -35,6 +35,7 @@
 - 不要假设“一次保存只产生一个 filesystem change”；Windows、OneDrive 等环境可能对同一次物理保存产生多个 watcher 事件
 - 当前 self-save 抑制以“短时有效的保存内容 fingerprint”为依据；只有磁盘内容仍与 MarkText 刚保存的内容一致时才忽略，内容不同必须继续作为真实外部修改处理
 - 修改 watcher 后至少回归测试：普通 Ctrl+S、OneDrive/云盘文件、Save As 同一路径、保存失败，以及 VS Code / Notepad 等外部编辑器修改
+- Windows DEV 调试时不要依赖 `Ctrl+Shift+I` 打开 DevTools；当前环境该快捷键不可用。需要观察 renderer 内部状态时，应临时通过 IPC 将诊断信息转发到 main process，并直接输出到运行 `pnpm run dev` 的 PowerShell 终端；问题确认后应删除临时诊断桥接和日志
 
 ## 当前主要自定义功能
 

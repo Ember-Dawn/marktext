@@ -545,3 +545,158 @@ renderer save
 当前通过“规范化路径 + 写入前登记 + Markdown SHA-256 fingerprint + 短时保留 + 内容不同立即恢复外部修改”的组合方式解决。
 
 该方案已经通过实际 DEV 使用验证：普通 Ctrl+S 不再错误弹出 Reload，同时设计上继续保留真实外部修改检测。
+
+## 16. Renderer false-dirty：只点击文档末尾却被标记为未保存
+
+在 watcher self-save 修复完成后，又发现了一个独立的 renderer 保存状态问题：
+
+1. 打开一个已经保存的 Markdown 文件；
+2. 不输入、不删除任何字符；
+3. 仅把光标点击到文档最后一行/末尾区域；
+4. tab 出现未保存的小亮点，要求再次 Ctrl+S。
+
+这个问题不是 filesystem watcher，也不是 OneDrive 自触发。它发生在 renderer 的：
+
+```text
+packages/desktop/src/renderer/src/store/editor.ts
+LISTEN_FOR_CONTENT_CHANGE()
+```
+
+### 16.1 诊断结果
+
+针对真实复现加入临时 `[MT-CONTENT-DIAG]` 后，关键样本为：
+
+```text
+oldMarkdownLength: 1447
+rawMarkdownLength: 1449
+adjustedMarkdownLength: 1447
+sameAfterAdjust: true
+
+historyIndex: 2
+historyStackLength: 3
+lastEditIndex: 2
+lastSavedHistoryId: -1
+editEntryId: 2
+```
+
+文档末尾同时表现为：
+
+```text
+old:      ![]()\n
+raw:      ![]()\n\n\n
+adjusted: ![]()\n
+```
+
+这说明 Muya 在点击文档末尾时会为了内部可编辑 block / cursor 状态临时产生额外 trailing newlines，并生成新的 history entry；但 MarkText 随后按照 `trimTrailingNewline` 对 Markdown 规范化后，实际将要保存的 Markdown 与原内容完全一致。
+
+也就是说：
+
+```text
+Muya history 发生变化
+!=
+实际 Markdown 内容发生变化
+```
+
+旧逻辑主要根据 `lastEditIndex / lastSavedHistoryId` 判断 dirty，因此把这类内部 history 变化误判成真实编辑。
+
+### 16.2 最终修复原则
+
+`LISTEN_FOR_CONTENT_CHANGE()` 在执行：
+
+```text
+adjustTrailingNewlines(markdown, trimTrailingNewline)
+```
+
+之后先计算：
+
+```text
+contentChanged = oldMarkdown !== markdown
+```
+
+只有 `contentChanged === true` 时，才继续进入现有 history-based dirty / undo / auto-save 判断。
+
+如果规范化后 Markdown 完全相同，则仍然允许更新：
+
+- cursor；
+- `muyaIndexCursor`；
+- history；
+- blocks；
+- TOC；
+
+但不改变 `tab.isSaved`，也不触发 Auto Save。
+
+这里必须强调：
+
+```text
+内容没变 -> 保持原 isSaved 状态
+```
+
+而不是：
+
+```text
+内容没变 -> 强制 isSaved = true
+```
+
+否则文件本来已经存在真实未保存修改时，再发生一次无内容变化的 cursor/history event，就可能被错误恢复成已保存状态。
+
+### 16.3 与 watcher self-save 的边界
+
+两个问题属于不同层：
+
+```text
+Ctrl+S 后误报 changed on disk
+-> main process / filesystem watcher / self-save fingerprint
+
+纯点击末尾却出现未保存小亮点
+-> renderer / Muya content-change / history dirty 判断
+```
+
+后续排查时不要把两类症状混在一起。
+
+## 17. Windows DEV 诊断日志约定
+
+当前 Windows DEV 环境中，`Ctrl+Shift+I` 不能可靠打开 Electron DevTools，本次实际测试中该快捷键无反应。
+
+因此以后需要观察 renderer 内部状态时，不要把 DevTools Console 作为默认诊断路径。推荐方式是临时增加 DEV-only IPC：
+
+```text
+renderer
+  ↓ IPC
+main process
+  ↓ console.log
+运行 pnpm run dev 的 PowerShell 终端
+```
+
+这样用户只需要运行：
+
+```powershell
+cd E:\github\marktext
+pnpm run dev
+```
+
+即可直接在 PowerShell 终端复制诊断日志。
+
+诊断完成后必须删除临时 IPC bridge 和日志，例如本次使用过的：
+
+```text
+mt::content-diag
+[MT-CONTENT-DIAG]
+```
+
+不要让一次性诊断代码长期留在正式版本。
+
+终端中的中文 pathname 可能显示乱码；如果路径身份判断本身正常命中，应优先把它视为终端编码/显示问题，而不是直接判断为 pathname 逻辑错误。
+
+## 18. false-dirty 回归测试
+
+以后修改 `LISTEN_FOR_CONTENT_CHANGE()`、trailing newline、Muya history 或 Auto Save 时，至少补充以下测试：
+
+1. 打开已保存 Markdown，只点击正文中间位置，确认不出现未保存标记；
+2. 只点击文档最后一行/末尾空白区域，确认不出现未保存标记；
+3. 实际输入一个字符，确认立即进入未保存状态；
+4. 文件已经是未保存状态时，再点击末尾，确认仍保持未保存，不能被误标为 saved；
+5. Ctrl+S 后确认恢复 saved；
+6. 保存后继续输入，确认再次变为 dirty；
+7. Undo 回到保存点时，确认现有 history-based saved 恢复逻辑仍正常；
+8. Auto Save 开启时，纯 cursor/history event 不应触发无意义的保存；
+9. 同时继续执行第 13 节的 watcher / OneDrive / 外部编辑器回归测试，确认 renderer 修复没有破坏外部修改保护。

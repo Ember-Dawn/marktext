@@ -1349,10 +1349,9 @@ export const useEditorStore = defineStore('editor', {
       if (!tab) return
 
       const { filename, pathname, markdown: oldMarkdown, trimTrailingNewline } = tab
-      const wasSaved = tab.isSaved
-      const rawMarkdown = markdown
 
       markdown = adjustTrailingNewlines(markdown, trimTrailingNewline)
+      const contentChanged = oldMarkdown !== markdown
       tab.markdown = markdown
 
       if (oldMarkdown.length === 0 && markdown.length === 1 && markdown[0] === '\n') {
@@ -1378,52 +1377,31 @@ export const useEditorStore = defineStore('editor', {
           ? tab.history.stack[lastEditIndex]
           : undefined
 
-      if (process.env.NODE_ENV === 'development') {
-        window.electron.ipcRenderer.send('mt::content-diag', {
-          id,
-          pathname,
-          wasSaved,
-          trimTrailingNewline,
-          oldMarkdownLength: oldMarkdown.length,
-          rawMarkdownLength: rawMarkdown.length,
-          adjustedMarkdownLength: markdown.length,
-          sameAfterAdjust: oldMarkdown === markdown,
-          oldTail: JSON.stringify(oldMarkdown.slice(-40)),
-          rawTail: JSON.stringify(rawMarkdown.slice(-40)),
-          adjustedTail: JSON.stringify(markdown.slice(-40)),
-          historyPayloadPresent: !!history,
-          historyIndex: tab.history.index,
-          historyStackLength: tab.history.stack.length,
-          lastEditIndex,
-          lastSavedHistoryId: tab.lastSavedHistoryId,
-          lastInitIndex: tab.history.lastInitIndex,
-          editEntryId: editEntry?.id
-        })
-      }
-
-      if (
-        (typeof lastEditIndex === 'number' &&
-          lastEditIndex >= 0 &&
-          editEntry !== undefined &&
-          editEntry.id !== tab.lastSavedHistoryId) ||
-        (lastEditIndex === -1 &&
-          tab.lastSavedHistoryId !== -1 &&
-          tab.lastSavedHistoryId !== tab.history.lastInitIndex) // Edge Case: Undo to original content (lastEditIndex === -1) after saving means we cant use the lastEditIndex. Compare it against the lastInitIndex instead.
-      ) {
-        tab.isSaved = false
-        if (pathname && autoSave) {
-          const options = getOptionsFromState(tab)
-          this.HANDLE_AUTO_SAVE({
-            id,
-            filename,
-            pathname,
-            markdown,
-            options
-          })
+      if (contentChanged) {
+        if (
+          (typeof lastEditIndex === 'number' &&
+            lastEditIndex >= 0 &&
+            editEntry !== undefined &&
+            editEntry.id !== tab.lastSavedHistoryId) ||
+          (lastEditIndex === -1 &&
+            tab.lastSavedHistoryId !== -1 &&
+            tab.lastSavedHistoryId !== tab.history.lastInitIndex) // Edge Case: Undo to original content (lastEditIndex === -1) after saving means we cant use the lastEditIndex. Compare it against the lastInitIndex instead.
+        ) {
+          tab.isSaved = false
+          if (pathname && autoSave) {
+            const options = getOptionsFromState(tab)
+            this.HANDLE_AUTO_SAVE({
+              id,
+              filename,
+              pathname,
+              markdown,
+              options
+            })
+          }
+        } else if (tab.lastSavedHistoryId !== -1) {
+          // Check here is to prevent it from overriding a restored .isSaved state
+          tab.isSaved = true // An undo can trigger this
         }
-      } else if (tab.lastSavedHistoryId !== -1) {
-        // Check here is to prevent it from overriding a restored .isSaved state
-        tab.isSaved = true // An undo can trigger this
       }
       debouncedSendBufferedState()
     },
