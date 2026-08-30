@@ -419,6 +419,13 @@ class WindowManager extends TypedEmitter<WindowManagerEvents> {
 
     // --- local events ---------------
 
+    // DEV-only bridge for renderer content-change diagnostics.
+    ipcMain.on('mt::content-diag', (_e, details: Record<string, unknown>) => {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[MT-CONTENT-DIAG]', 'CONTENT_CHANGE', details)
+      }
+    })
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ipcMain.on('watcher-unwatch-all-by-id', (windowId: any) => {
       this._watcher.unwatchByWindowId(windowId as number)

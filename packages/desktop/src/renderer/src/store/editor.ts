@@ -1379,7 +1379,7 @@ export const useEditorStore = defineStore('editor', {
           : undefined
 
       if (process.env.NODE_ENV === 'development') {
-        console.log('[MT-CONTENT-DIAG]', 'CONTENT_CHANGE', {
+        window.electron.ipcRenderer.send('mt::content-diag', {
           id,
           pathname,
           wasSaved,
